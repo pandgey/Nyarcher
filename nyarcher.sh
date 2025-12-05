@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then 
+    echo "Please run this script as root (use sudo)"
+    exit 1
+fi
+
 LATEST_TAG_VERSION=`curl -s https://api.github.com/repos/NyarchLinux/NyarchLinux/releases/latest | grep "tag_name" | awk -F'"' '/tag_name/ {print $4}'`
 RELEASE_LINK="https://github.com/NyarchLinux/NyarchLinux/releases/download/$LATEST_TAG_VERSION/"
 TAG_PATH="https://raw.githubusercontent.com/NyarchLinux/NyarchLinux/refs/tags/$LATEST_TAG_VERSION/Gnome/"
@@ -8,8 +14,8 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 curl https://raw.githubusercontent.com/NyarchLinux/NyarchLinux/main/Gnome/etc/skel/.config/neofetch/ascii70
-echo -e "$RED\n\nWelcome to Nyarch Linux customization installer! $NC"
-
+echo -e "$RED\n\nWelcome to Nyarch Linux SYSTEM-WIDE customization installer! $NC"
+echo -e "${RED}This will install for ALL users on the system.$NC\n"
 
 check_gnome_version() {
   GNOME_VERSION=`gnome-session --version`
@@ -17,14 +23,6 @@ check_gnome_version() {
   GNOME_VERSION_MAJOR=${GNOME_VERSION_NUMBER%%.*}
   if [ "$GNOME_VERSION_MAJOR" -lt 47 ]; then
     echo "You need Gnome version 47 or above."
-    exit
-  fi
-}
-
-check_gnome_is_running() {
-  CURRENT_ENV=${XDG_CURRENT_DESKTOP,,}
-  if [[ $CURRENT_ENV != *"gnome"* ]]; then
-    echo "Gnome isn't running, please launch gnome environment first"
     exit
   fi
 }
@@ -43,51 +41,116 @@ get_tarball() {
     fi
 }
 
-install_extensions () {
+install_extensions_systemwide() {
   check_gnome_version
-  check_gnome_is_running
-  cd ~/.local/share/gnome-shell  # Go to Gnome extensions config folder 
-  echo "Backup old extensions to extensions-backup..."
-  mv extensions extensions-backup  # Backup old extensions 
-
-  get_tarball
-  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/gnome-shell/extensions ~/.local/share/gnome-shell
   
-  # Install material you
+  # Install to /etc/skel for new users
+  echo "Installing extensions to /etc/skel for new users..."
+  mkdir -p /etc/skel/.local/share/gnome-shell
+  get_tarball
+  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/gnome-shell/extensions /etc/skel/.local/share/gnome-shell/
+  
+  # Install for all existing users
+  echo "Installing extensions for all existing users..."
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      echo "Installing for user: $username"
+      
+      # Create directory structure
+      sudo -u "$username" mkdir -p "$user_home/.local/share/gnome-shell"
+      
+      # Backup existing extensions
+      if [ -d "$user_home/.local/share/gnome-shell/extensions" ]; then
+        mv "$user_home/.local/share/gnome-shell/extensions" "$user_home/.local/share/gnome-shell/extensions-backup-$(date +%s)"
+      fi
+      
+      # Copy extensions
+      cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/gnome-shell/extensions "$user_home/.local/share/gnome-shell/"
+      chown -R "$username:$username" "$user_home/.local/share/gnome-shell/extensions"
+      chmod -R 755 "$user_home/.local/share/gnome-shell/extensions"
+    fi
+  done
+  
+  # Install material you globally
   cd /tmp
-  git clone https://github.com/FrancescoCaracciolo/material-you-colors.git
+  if [ ! -d "material-you-colors" ]; then
+    git clone https://github.com/FrancescoCaracciolo/material-you-colors.git
+  fi
   cd material-you-colors
   make build
-  make install
-  npm install --prefix $HOME/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io;
-  cd $HOME/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io
-  git clone https://github.com/francescocaracciolo/adwaita-material-you
-  cd adwaita-material-you
-  bash local-install.sh
-  # Set correct permissions 
-  chmod -R 755 extensions/*
   
-  # Install material you icons 
-  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/nyarch ~/.config
-  cd ~/.config/nyarch
-  git clone https://github.com/vinceliuice/Tela-circle-icon-theme
+  # Install for each user
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      sudo -u "$username" make install
+      npm install --prefix "$user_home/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io"
+      
+      cd "$user_home/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io"
+      if [ ! -d "adwaita-material-you" ]; then
+        git clone https://github.com/francescocaracciolo/adwaita-material-you
+      fi
+      cd adwaita-material-you
+      sudo -u "$username" bash local-install.sh
+      chown -R "$username:$username" "$user_home/.local/share/gnome-shell/extensions/material-you-colors@francescocaracciolo.github.io"
+    fi
+  done
+  
+  # Install material you icons for all users
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      mkdir -p "$user_home/.config/nyarch"
+      cd "$user_home/.config/nyarch"
+      if [ ! -d "Tela-circle-icon-theme" ]; then
+        git clone https://github.com/vinceliuice/Tela-circle-icon-theme
+      fi
+      chown -R "$username:$username" "$user_home/.config/nyarch"
+    fi
+  done
+  
+  # Also install to /etc/skel
+  mkdir -p /etc/skel/.config/nyarch
+  cd /etc/skel/.config/nyarch
+  if [ ! -d "Tela-circle-icon-theme" ]; then
+    git clone https://github.com/vinceliuice/Tela-circle-icon-theme
+  fi
 }
 
 install_nyaofetch() {
-  cd /usr/bin # Install nekofetch and nyaofetch
-  # Download scripts
-  sudo wget ${TAG_PATH}usr/local/bin/nekofetch
-  sudo wget ${TAG_PATH}usr/local/bin/nyaofetch
-  # Give the user execution permissions
-  sudo chmod +x nekofetch
-  sudo chmod +x nyaofetch
+  cd /usr/bin
+  # Download scripts to system-wide location
+  wget -O /usr/local/bin/nekofetch ${TAG_PATH}usr/local/bin/nekofetch
+  wget -O /usr/local/bin/nyaofetch ${TAG_PATH}usr/local/bin/nyaofetch
+  # Give execution permissions
+  chmod +x /usr/local/bin/nekofetch
+  chmod +x /usr/local/bin/nyaofetch
 }
 
 configure_neofetch() {
   get_tarball
-  mv ~/.config/fastfetch ~/.config/fastfetch-backup  # Backup previous fastfetch
-  # Install new fastfetch files
-  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/fastfetch ~/.config
+  
+  # Install to /etc/skel
+  mkdir -p /etc/skel/.config/fastfetch
+  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/fastfetch/* /etc/skel/.config/fastfetch/
+  
+  # Install for all existing users
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      
+      # Backup existing
+      if [ -d "$user_home/.config/fastfetch" ]; then
+        mv "$user_home/.config/fastfetch" "$user_home/.config/fastfetch-backup-$(date +%s)"
+      fi
+      
+      # Install new
+      mkdir -p "$user_home/.config/fastfetch"
+      cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/fastfetch/* "$user_home/.config/fastfetch/"
+      chown -R "$username:$username" "$user_home/.config/fastfetch"
+    fi
+  done
 }
 
 download_wallpapers() {
@@ -95,234 +158,295 @@ download_wallpapers() {
   wget ${RELEASE_LINK}wallpaper.tar.gz
   tar -xvf wallpaper.tar.gz
   cd wallpaper 
+  # Install system-wide (modify install.sh if needed to install to /usr/share/backgrounds)
   bash install.sh
 }
 
-# TODO CONTINUE
 download_icons() {
   cd /tmp 
   wget ${RELEASE_LINK}icons.tar.gz
   tar -xvf icons.tar.gz
-  cp -rf Tela-circle-MaterialYou ~/.local/share/icons/Tela-circle-MaterialYou
+  
+  # Install to /usr/share/icons for system-wide access
+  mkdir -p /usr/share/icons
+  cp -rf Tela-circle-MaterialYou /usr/share/icons/
+  
+  # Also install for each user
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      mkdir -p "$user_home/.local/share/icons"
+      cp -rf Tela-circle-MaterialYou "$user_home/.local/share/icons/"
+      chown -R "$username:$username" "$user_home/.local/share/icons/Tela-circle-MaterialYou"
+    fi
+  done
+  
+  # Install to /etc/skel
+  mkdir -p /etc/skel/.local/share/icons
+  cp -rf Tela-circle-MaterialYou /etc/skel/.local/share/icons/
 }
 
 set_themes() {
-  cd ~/.local/share
-  mv themes themes-backup  # Backup icons
   get_tarball
-  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes ~/.local/share
-  cd ~/.config
-  # Set GTK4 and GTK3 themes
-  mv gtk-3.0 gtk-3.0-backup
-  mv gtk-4.0 gtk-4.0-backup
-  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-3.0 ~/.config
-  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 ~/.config
+  
+  # Install to /etc/skel
+  mkdir -p /etc/skel/.local/share/themes
+  mkdir -p /etc/skel/.config
+  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* /etc/skel/.local/share/themes/
+  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-3.0 /etc/skel/.config/
+  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 /etc/skel/.config/
+  
+  # Install for all existing users
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      
+      # Backup existing
+      [ -d "$user_home/.local/share/themes" ] && mv "$user_home/.local/share/themes" "$user_home/.local/share/themes-backup-$(date +%s)"
+      [ -d "$user_home/.config/gtk-3.0" ] && mv "$user_home/.config/gtk-3.0" "$user_home/.config/gtk-3.0-backup-$(date +%s)"
+      [ -d "$user_home/.config/gtk-4.0" ] && mv "$user_home/.config/gtk-4.0" "$user_home/.config/gtk-4.0-backup-$(date +%s)"
+      
+      # Install new
+      mkdir -p "$user_home/.local/share/themes"
+      mkdir -p "$user_home/.config"
+      cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* "$user_home/.local/share/themes/"
+      cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-3.0 "$user_home/.config/"
+      cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 "$user_home/.config/"
+      
+      chown -R "$username:$username" "$user_home/.local/share/themes"
+      chown -R "$username:$username" "$user_home/.config/gtk-3.0"
+      chown -R "$username:$username" "$user_home/.config/gtk-4.0"
+    fi
+  done
 }
 
-configure_kitty (){
-  mkdir ~/.config/kitty
-  cd ~/.config/kitty
-  mv kitty.conf kitty-backup.conf
-  wget ${TAG_PATH}etc/skel/.config/kitty/kitty.conf
+configure_kitty() {
+  # Install to /etc/skel
+  mkdir -p /etc/skel/.config/kitty
+  wget -O /etc/skel/.config/kitty/kitty.conf ${TAG_PATH}etc/skel/.config/kitty/kitty.conf
+  
+  # Install for all existing users
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      mkdir -p "$user_home/.config/kitty"
+      
+      # Backup existing
+      [ -f "$user_home/.config/kitty/kitty.conf" ] && mv "$user_home/.config/kitty/kitty.conf" "$user_home/.config/kitty/kitty-backup-$(date +%s).conf"
+      
+      # Install new
+      wget -O "$user_home/.config/kitty/kitty.conf" ${TAG_PATH}etc/skel/.config/kitty/kitty.conf
+      chown -R "$username:$username" "$user_home/.config/kitty"
+    fi
+  done
 }
-
 
 flatpak_overrides() {
-  sudo flatpak override --filesystem=xdg-config/gtk-3.0
-  sudo flatpak override --filesystem=xdg-config/gtk-4.0
+  flatpak override --filesystem=xdg-config/gtk-3.0
+  flatpak override --filesystem=xdg-config/gtk-4.0
 }
-
 
 install_flatpaks() {
   # Add flathub
   flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
   # Themes
-  flatpak install org.gtk.Gtk3theme.adw-gtk3 org.gtk.Gtk3theme.adw-gtk3-dark
-  # Komikku
-  flatpak install flathub info.febvre.Komikku
-  # Flatseal
-  flatpak install flathub com.github.tchx84.Flatseal
-  # Shortwave
-  flatpak install flathub de.haeckerfelix.Shortwave
-  # Lollypop
-  flatpak install flathub org.gnome.Lollypop
-  # Fragments
-  flatpak install flathub de.haeckerfelix.Fragments
-  # Flatseal
-  flatpak install flathub com.github.tchx84.Flatseal
-  # Extension Manager
-  flatpak install flathub com.mattjakeman.ExtensionManager
-  # GearLever
-  flatpak install flathub it.mijorus.gearlever
+  flatpak install -y org.gtk.Gtk3theme.adw-gtk3 org.gtk.Gtk3theme.adw-gtk3-dark
+  # Apps
+  flatpak install -y flathub info.febvre.Komikku
+  flatpak install -y flathub com.github.tchx84.Flatseal
+  flatpak install -y flathub de.haeckerfelix.Shortwave
+  flatpak install -y flathub org.gnome.Lollypop
+  flatpak install -y flathub de.haeckerfelix.Fragments
+  flatpak install -y flathub com.mattjakeman.ExtensionManager
+  flatpak install -y flathub it.mijorus.gearlever
 }
 
 install_nyarch_apps() {
-  # Install latest release of CatgirlDownloader through flatpak bundle
   cd /tmp
-  wget https://github.com/nyarchlinux/catgirldownloader/releases/latest/download/catgirldownloader.flatpak 
-  flatpak install catgirldownloader.flatpak
-
-  # Install latest release of NyarchWizard through flatpak bundle
-  cd /tmp
-  wget https://github.com/nyarchlinux/nyarchwizard/releases/latest/download/wizard.flatpak 
-  flatpak install wizard.flatpak
-
-  # Install latest release of NyarchTour through flatpak bundle
-  cd /tmp
-  wget https://github.com/nyarchlinux/nyarchtour/releases/latest/download/nyarchtour.flatpak 
-  flatpak install nyarchtour.flatpak
-
-  # Install latest release of NyarchCustomize
-  cd /tmp
-  wget https://github.com/nyarchlinux/nyarchcustomize/releases/latest/download/nyarchcustomize.flatpak 
-  flatpak install nyarchcustomize.flatpak
- 
-  # Install Nyarch Scripts
-  cd /tmp
-  wget https://github.com/nyarchlinux/nyarchscript/releases/latest/download/nyarchscript.flatpak
-  flatpak install nyarchscript.flatpak
-
-  # Install Waifu Downloader
-  cd /tmp 
-  wget https://github.com/nyarchlinux/waifu-downloader/releases/latest/download/waifudownloader.flatpak
-  flatpak install waifudownloader.flatpak
   
+  # CatgirlDownloader
+  wget https://github.com/nyarchlinux/catgirldownloader/releases/latest/download/catgirldownloader.flatpak 
+  flatpak install -y catgirldownloader.flatpak
+
+  # NyarchWizard
+  wget https://github.com/nyarchlinux/nyarchwizard/releases/latest/download/wizard.flatpak 
+  flatpak install -y wizard.flatpak
+
+  # NyarchTour
+  wget https://github.com/nyarchlinux/nyarchtour/releases/latest/download/nyarchtour.flatpak 
+  flatpak install -y nyarchtour.flatpak
+
+  # NyarchCustomize
+  wget https://github.com/nyarchlinux/nyarchcustomize/releases/latest/download/nyarchcustomize.flatpak 
+  flatpak install -y nyarchcustomize.flatpak
+ 
+  # Nyarch Scripts
+  wget https://github.com/nyarchlinux/nyarchscript/releases/latest/download/nyarchscript.flatpak
+  flatpak install -y nyarchscript.flatpak
+
+  # Waifu Downloader
+  wget https://github.com/nyarchlinux/waifu-downloader/releases/latest/download/waifudownloader.flatpak
+  flatpak install -y waifudownloader.flatpak
 }
 
 install_nyarch_assistant() {
-  # Install Nyarch Assistant
   cd /tmp
   wget https://github.com/nyarchlinux/nyarchassistant/releases/latest/download/nyarchassistant.flatpak
-  flatpak install nyarchassistant.flatpak
+  flatpak install -y nyarchassistant.flatpak
 }
 
 install_nyarch_updater() {
-  # Install Nyarch Updater
   cd /tmp
   wget https://github.com/nyarchlinux/nyarchupdater/releases/latest/download/nyarchupdater.flatpak
-  flatpak install nyarchupdater.flatpak
-  sudo bash -c 'echo 241104 > /version'
+  flatpak install -y nyarchupdater.flatpak
+  echo 241104 > /version
 }
 
 configure_gsettings() {
   check_gnome_version
-  check_gnome_is_running
-  dconf dump / > ~/dconf-backup.txt  # Save old gnome settings
-  cd /tmp
-  # Download default settings
   get_tarball
-  cd /tmp/NyarchLinux/Gnome/etc/dconf/db/local.d
-  # Load settings
-  dconf load / < 06-extensions  # Load extensions settings
-  dconf load / < 02-interface  # Load theme settings
-  dconf load / < 04-wmpreferences  # Add minimize button
-  dconf load / < 03-background  # Set gnome terminal and background settings
+  
+  # For each user with an active GNOME session, apply settings
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      echo "Configuring gsettings for user: $username"
+      
+      # Get user's UID
+      user_uid=$(id -u "$username")
+      
+      # Backup old settings
+      sudo -u "$username" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_uid/bus" dconf dump / > "$user_home/dconf-backup-$(date +%s).txt"
+      
+      # Load new settings
+      cd /tmp/NyarchLinux/Gnome/etc/dconf/db/local.d
+      sudo -u "$username" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_uid/bus" dconf load / < 06-extensions
+      sudo -u "$username" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_uid/bus" dconf load / < 02-interface
+      sudo -u "$username" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_uid/bus" dconf load / < 04-wmpreferences
+      sudo -u "$username" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_uid/bus" dconf load / < 03-background
+    fi
+  done
 }
 
 add_pywal() {
-echo 'if [[ -f "$HOME/.cache/wal/sequences" ]]; then' >> ~/.bashrc
-echo '    (cat $HOME/.cache/wal/sequences)' >> ~/.bashrc
-echo 'fi' >> ~/.bashrc
-}
+  # Add to /etc/skel/.bashrc
+  if ! grep -q "cache/wal/sequences" /etc/skel/.bashrc 2>/dev/null; then
+    cat >> /etc/skel/.bashrc << 'EOF'
 
+# Pywal
+if [[ -f "$HOME/.cache/wal/sequences" ]]; then
+    (cat $HOME/.cache/wal/sequences)
+fi
+EOF
+  fi
+  
+  # Add to all existing users
+  for user_home in /home/*; do
+    if [ -d "$user_home" ]; then
+      username=$(basename "$user_home")
+      if ! grep -q "cache/wal/sequences" "$user_home/.bashrc" 2>/dev/null; then
+        cat >> "$user_home/.bashrc" << 'EOF'
+
+# Pywal
+if [[ -f "$HOME/.cache/wal/sequences" ]]; then
+    (cat $HOME/.cache/wal/sequences)
+fi
+EOF
+        chown "$username:$username" "$user_home/.bashrc"
+      fi
+    fi
+  done
+}
 
 ## EXECUTION PART
 
 check_gnome_version
-check_gnome_is_running
 
-read -r -p "Have you installed all the dependecies listed in the github page of this script? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
-  echo Cool! We can go ahead
+read -r -p "Have you installed all the dependencies listed in the github page of this script? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+  echo "Cool! We can go ahead"
 else
-  echo You need to have already installed the dependencies listed on github before running this script!
+  echo "You need to have already installed the dependencies listed on github before running this script!"
   exit
 fi
 
-read -r -p "Do you want to install our Gnome extensions, they are important for the overall desktop customization? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
-  install_extensions
-  echo "Gnome extensions installed!"
+read -r -p "Do you want to install Gnome extensions system-wide? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+  install_extensions_systemwide
+  echo "Gnome extensions installed system-wide!"
 fi
-read -r -p "[SYSTEM] Do you want to install Nekofetch and Nyaofetch and configure neofetch, to tell everyone that you use nyarch btw? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "[SYSTEM] Do you want to install Nekofetch and Nyaofetch system-wide? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   install_nyaofetch
   configure_neofetch
-  echo "Nyaofetch and Neofetch installed!"
+  echo "Nyaofetch and Neofetch installed system-wide!"
 fi
+
 read -r -p "Download Nyarch wallpapers? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   download_wallpapers
   echo "Wallpapers downloaded!"
 fi
-read -r -p "Do you want to download our icons? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "Do you want to download icons system-wide? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   download_icons
-  echo "Icons downloaded!"
+  echo "Icons installed system-wide!"
 fi
-read -r -p "Do you want to download our themes? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "Do you want to download themes system-wide? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   set_themes
-  echo "Themes downloaded!"
+  echo "Themes installed system-wide!"
 fi
-read -r -p "Do you want to apply our customizations to kitty terminal? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "Do you want to apply customizations to kitty terminal system-wide? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   configure_kitty
-  echo "Kitty configured!"
+  echo "Kitty configured system-wide!"
 fi
-read -r -p "Do you want to add pywal theming to your ~/.bashrc (for other shells you have to do it manually)? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "Do you want to add pywal theming to all users' ~/.bashrc? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   add_pywal
-  echo "pywal configured!"
+  echo "pywal configured system-wide!"
 fi
-read -r -p "Do you want to apply your GTK themes to flatpak apps? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "Do you want to apply GTK themes to flatpak apps? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   flatpak_overrides
   echo "Flatpak themes configured!"
 fi
-read -r -p "Do you want to install suggested flatpaks to enhance your weebflow (You will be able to not download only some of them)? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "Do you want to install suggested flatpaks? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   install_flatpaks
   echo "Suggested apps installed!"
 fi
+
 read -r -p "[SYSTEM] Do you want to install Nyarch Exclusive applications? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   install_nyarch_apps
   echo "Nyarch apps installed!"
 fi
-read -r -p "[SYSTEM] Do you want to install Nyarch Assistant, our Waifu AI Assistant? (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then 
+
+read -r -p "[SYSTEM] Do you want to install Nyarch Assistant? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then 
   install_nyarch_assistant
   echo "Nyarch Assistant installed!"
 fi 
-read -r -p "[SYSTEM] Do you want to install Nyarch Updater? It's going to have some issues outside of Nyarch and Arch in general (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+
+read -r -p "[SYSTEM] Do you want to install Nyarch Updater? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   install_nyarch_updater
   echo "Nyarch Updater installed!"
 fi
 
-read -r -p "Do you want to edit your Gnome settings? Note that if you have not installed something before, you may experience some bugs at the start (Y/n): " response
-if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]
-then
+read -r -p "Do you want to configure Gnome settings for all users? (Y/n): " response
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
   configure_gsettings
-  echo "Nyarch apps installed!"
+  echo "Gnome settings configured for all users!"
 fi
 
-
-
-echo -e "$RED Log out and login to see the results! $NC"
-
-
+echo -e "$RED Installation complete! All users need to log out and log back in to see the results! $NC"
