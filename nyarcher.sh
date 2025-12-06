@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e  # Exit if there is any error
+
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then 
     echo "Please run this script as root (use sudo)"
@@ -98,16 +100,16 @@ install_extensions_systemwide() {
   done
   
   # Install material you icons for all users
-  for user_home in /home/*; do
-    if [ -d "$user_home" ]; then
-      username=$(basename "$user_home")
-      mkdir -p "$user_home/.config/nyarch"
-      cd "$user_home/.config/nyarch"
-      if [ ! -d "Tela-circle-icon-theme" ]; then
-        git clone https://github.com/vinceliuice/Tela-circle-icon-theme
-      fi
-      chown -R "$username:$username" "$user_home/.config/nyarch"
+    cd /tmp
+    if [ ! -d "Tela-circle-icon-theme" ]; then
+      git clone https://github.com/vinceliuice/Tela-circle-icon-theme
     fi
+    cd Tela-circle-icon-theme
+    # Install to /usr/local/share/icons
+    ./install.sh -d /usr/local/share/icons 2>/dev/null || {
+      mkdir -p /usr/local/share/icons
+      cp -rf src/* /usr/local/share/icons/
+    }
   done
   
   # Also install to /etc/skel
@@ -167,53 +169,37 @@ download_icons() {
   wget ${RELEASE_LINK}icons.tar.gz
   tar -xvf icons.tar.gz
   
-  # Install to /usr/share/icons for system-wide access
-  mkdir -p /usr/share/icons
-  cp -rf Tela-circle-MaterialYou /usr/share/icons/
-  
-  # Also install for each user
-  for user_home in /home/*; do
-    if [ -d "$user_home" ]; then
-      username=$(basename "$user_home")
-      mkdir -p "$user_home/.local/share/icons"
-      cp -rf Tela-circle-MaterialYou "$user_home/.local/share/icons/"
-      chown -R "$username:$username" "$user_home/.local/share/icons/Tela-circle-MaterialYou"
-    fi
-  done
-  
-  # Install to /etc/skel
-  mkdir -p /etc/skel/.local/share/icons
-  cp -rf Tela-circle-MaterialYou /etc/skel/.local/share/icons/
+  # Install to /usr/local/share/icons for system-wide access
+  mkdir -p /usr/local/share/icons
+  cp -rf Tela-circle-MaterialYou /usr/local/share/icons/
 }
 
 set_themes() {
   get_tarball
   
-  # Install to /etc/skel
-  mkdir -p /etc/skel/.local/share/themes
+  # Install themes to /usr/local/share/themes for system-wide access
+  mkdir -p /usr/local/share/themes
+  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* /usr/local/share/themes/
+  
+  # GTK configs MUST be per-user, install to /etc/skel and existing users
   mkdir -p /etc/skel/.config
-  cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* /etc/skel/.local/share/themes/
   cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-3.0 /etc/skel/.config/
   cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 /etc/skel/.config/
   
-  # Install for all existing users
+  # Install GTK configs for all existing users (NOT themes)
   for user_home in /home/*; do
     if [ -d "$user_home" ]; then
       username=$(basename "$user_home")
       
-      # Backup existing
-      [ -d "$user_home/.local/share/themes" ] && mv "$user_home/.local/share/themes" "$user_home/.local/share/themes-backup-$(date +%s)"
+      # Backup existing GTK configs only
       [ -d "$user_home/.config/gtk-3.0" ] && mv "$user_home/.config/gtk-3.0" "$user_home/.config/gtk-3.0-backup-$(date +%s)"
       [ -d "$user_home/.config/gtk-4.0" ] && mv "$user_home/.config/gtk-4.0" "$user_home/.config/gtk-4.0-backup-$(date +%s)"
       
-      # Install new
-      mkdir -p "$user_home/.local/share/themes"
+      # Install GTK configs only (NOT themes)
       mkdir -p "$user_home/.config"
-      cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.local/share/themes/* "$user_home/.local/share/themes/"
       cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-3.0 "$user_home/.config/"
       cp -rf /tmp/NyarchLinux/Gnome/etc/skel/.config/gtk-4.0 "$user_home/.config/"
       
-      chown -R "$username:$username" "$user_home/.local/share/themes"
       chown -R "$username:$username" "$user_home/.config/gtk-3.0"
       chown -R "$username:$username" "$user_home/.config/gtk-4.0"
     fi
