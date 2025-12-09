@@ -110,7 +110,6 @@ install_extensions_systemwide() {
       mkdir -p /usr/local/share/icons
       cp -rf src/* /usr/local/share/icons/
     }
-  done
   
   # Also install to /etc/skel
   mkdir -p /etc/skel/.config/nyarch
