@@ -219,7 +219,11 @@ configure_kitty() {
       
       # Install new
       wget -O "$user_home/.config/kitty/kitty.conf" ${TAG_PATH}etc/skel/.config/kitty/kitty.conf
+      
+      # Fix ownership and permissions
       chown -R "$username:$username" "$user_home/.config/kitty"
+      chmod 755 "$user_home/.config/kitty"
+      chmod 644 "$user_home/.config/kitty/kitty.conf"
     fi
   done
 }
